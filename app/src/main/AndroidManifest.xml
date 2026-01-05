@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.tae.printbridge">
+
+    <!-- Tablet debe soportar USB Host (OTG) -->
+    <uses-feature android:name="android.hardware.usb.host" />
+
+    <!-- Tu server local -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Foreground service (Android 8+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- En Android 14+ algunos dispositivos piden este permiso extra -->
+    <!-- Si te da lata en build, lo puedes quitar y lo ajustamos según tu target -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <application
+        android:allowBackup="true"
+        android:label="TaePrintBridge"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.TaePrintBridge">
+
+        <!-- Servicio que mantiene vivo el puente -->
+        <service
+            android:name=".PrintBridgeService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+    </application>
+
+</manifest>
