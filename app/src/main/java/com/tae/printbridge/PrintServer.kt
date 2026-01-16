@@ -6,7 +6,7 @@ import org.json.JSONObject
 class PrintServer(
     port: Int,
     private val onPrint: (JSONObject) -> Boolean
-) : NanoHTTPD(port) {
+) : NanoHTTPD("0.0.0.0", port) {
 
     override fun serve(session: IHTTPSession): Response {
         // CORS

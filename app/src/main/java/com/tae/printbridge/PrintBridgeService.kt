@@ -29,7 +29,7 @@ class PrintBridgeService : Service() {
 
     private var server: PrintServer? = null
     private lateinit var usbPrinter: UsbEscPosPrinter
-
+    private val tcpPrinter = TcpEscPosPrinter()
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
@@ -72,13 +72,36 @@ class PrintBridgeService : Service() {
                 val text = payload.optString("text", "")
                 val cut = payload.optBoolean("cut", true)
 
-                Log.i(TAG, "PRINT request: cut=$cut textLen=${text.length}")
-                usbPrinter.printText(text, cut)
+                val transport = payload.optString("transport", "usb")
+
+                Log.i(TAG, "PRINT request: transport=$transport cut=$cut textLen=${text.length}")
+
+                when (transport) {
+                    "tcp" -> {
+                        val ip = payload.optString("ip", "")
+                        val port = payload.optInt("port", 9100)
+
+                        if (ip.isBlank()) {
+                            Log.e(TAG, "Falta ip para imprimir por tcp")
+                            false
+                        } else {
+                            val data = EscPosBuilder.text(text, cut)
+                            tcpPrinter.print(ip, port, data)
+                        }
+                    }
+
+                    else -> {
+                        // USB
+                        usbPrinter.printText(text, cut)
+                    }
+                }
             }
         )
 
+
         server?.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
-        Log.i(TAG, "Servicio listo en http://127.0.0.1:9100/print")
+        Log.i(TAG, "Servicio listo en http://0.0.0.0:9100/print (usa la IP de la tablet)")
+
     }
 
     override fun onDestroy() {
@@ -102,9 +125,10 @@ class PrintBridgeService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("TaePrintBridge activo")
-            .setContentText("Escuchando en 127.0.0.1:9100")
+            .setContentText("Escuchando en 0.0.0.0:9100")
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setOngoing(true)
             .build()
     }
+
 }
