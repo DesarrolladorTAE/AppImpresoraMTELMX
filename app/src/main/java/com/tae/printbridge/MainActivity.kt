@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
         )
 
         // 4) Carga tu POS (AJUSTA ESTA URL a la pantalla exacta)
-        webView.loadUrl("https://mitiendaenlineamx.com.mx/")
+        webView.loadUrl("https://mitiendaenlineamx.com.mx/prueba/pos")
 
         setContentView(webView)
 

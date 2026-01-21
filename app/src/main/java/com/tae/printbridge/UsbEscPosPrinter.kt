@@ -15,9 +15,13 @@ class UsbEscPosPrinter(
 
     companion object {
         private const val TAG = "UsbEscPosPrinter"
+        private const val TIMEOUT_MS = 4000
     }
 
-    fun printText(text: String, cut: Boolean = true): Boolean {
+    /**
+     * ✅ NUEVO: Imprime bytes ESC/POS crudos (soporta: texto + imagen + QR + cajón + corte)
+     */
+    fun printRaw(bytes: ByteArray): Boolean {
         val device = findCandidateDevice() ?: run {
             Log.e(TAG, "No hay impresora USB conectada")
             return false
@@ -50,18 +54,24 @@ class UsbEscPosPrinter(
                 return false
             }
 
-            val payload = buildEscPos(text, cut)
-            val sent = conn.bulkTransfer(epOut, payload, payload.size, 4000)
-
-            Log.i(TAG, "bulkTransfer sent=$sent bytes=${payload.size}")
+            val sent = conn.bulkTransfer(epOut, bytes, bytes.size, TIMEOUT_MS)
+            Log.i(TAG, "bulkTransfer RAW sent=$sent bytes=${bytes.size}")
             return sent > 0
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error imprimiendo: ${e.message}", e)
+            Log.e(TAG, "Error imprimiendo RAW: ${e.message}", e)
             return false
         } finally {
             try { conn.close() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * (Opcional) Para compatibilidad: arma ESC/POS básico desde texto
+     */
+    fun printText(text: String, cut: Boolean = true): Boolean {
+        val payload = buildEscPos(text, cut)
+        return printRaw(payload)
     }
 
     private fun requestPermission(device: UsbDevice) {
@@ -75,12 +85,10 @@ class UsbEscPosPrinter(
     }
 
     private fun findCandidateDevice(): UsbDevice? {
-        // Ojo: aquí tomamos el primer USB. Si conectas más cosas, filtra por vendorId/productId.
         val devices = usbManager.deviceList.values.toList()
         if (devices.isEmpty()) return null
 
-        // Heurística: impresoras a veces son class 7 (printer) o vendor-specific (255)
-        // Si hay varios, prioriza los que tengan interface OUT.
+        // Prioriza el primero que tenga endpoint OUT (típico de impresoras)
         return devices.firstOrNull { dev ->
             (0 until dev.interfaceCount).any { idx ->
                 val intf = dev.getInterface(idx)
@@ -95,7 +103,6 @@ class UsbEscPosPrinter(
     private fun pickInterface(device: UsbDevice): UsbInterface? {
         for (i in 0 until device.interfaceCount) {
             val intf = device.getInterface(i)
-            // buscamos una interfaz con endpoint OUT
             for (e in 0 until intf.endpointCount) {
                 val ep = intf.getEndpoint(e)
                 if (ep.direction == UsbConstants.USB_DIR_OUT) return intf
@@ -117,14 +124,12 @@ class UsbEscPosPrinter(
             .replace("\r\n", "\n")
             .replace("\r", "\n")
 
-        val init = byteArrayOf(0x1B, 0x40)          // ESC @ (reset)
-        val lf = "\n".toByteArray()
+        val init = byteArrayOf(0x1B, 0x40)  // ESC @ reset
+        val body = clean.toByteArray(Charset.forName("windows-1252"))
         val feed = "\n\n".toByteArray()
 
-        // Encoding: si se rompen acentos, prueba CP437 en vez de windows-1252
-        val body = clean.toByteArray(Charset.forName("windows-1252"))
-
         val cutCmd = if (cut) byteArrayOf(0x1D, 0x56, 0x00) else byteArrayOf()
+        val lf = "\n".toByteArray()
 
         return init + body + feed + cutCmd + lf
     }

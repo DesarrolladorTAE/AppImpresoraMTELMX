@@ -30,6 +30,7 @@ class PrintBridgeService : Service() {
     private var server: PrintServer? = null
     private lateinit var usbPrinter: UsbEscPosPrinter
     private val tcpPrinter = TcpEscPosPrinter()
+
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_USB_PERMISSION) return
@@ -57,7 +58,7 @@ class PrintBridgeService : Service() {
             permissionAction = ACTION_USB_PERMISSION
         )
 
-        // Receiver para permisos USB (compatible API 24+ y target 33+)
+        // Receiver para permisos USB
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         ContextCompat.registerReceiver(
             this,
@@ -69,13 +70,51 @@ class PrintBridgeService : Service() {
         server = PrintServer(
             port = 9100,
             onPrint = { payload: JSONObject ->
+
+                // =========================
+                // Payload base
+                // =========================
                 val text = payload.optString("text", "")
                 val cut = payload.optBoolean("cut", true)
 
+                // Nuevos campos
+                val openDrawer = payload.optBoolean("openDrawer", false)
+                val drawerPin = payload.optInt("drawerPin", 0) // 0 pin2 / 1 pin5
+
+                val imageBase64 = payload.optString("imageBase64", null)
+                    ?.takeIf { it.isNotBlank() }
+
+                val qrText = payload.optString("qrText", null)
+                    ?.takeIf { it.isNotBlank() }
+
+                val qrSize = payload.optInt("qrSize", 8)
+                val qrEcc = payload.optInt("qrEcc", 49) // M por default
+
                 val transport = payload.optString("transport", "usb")
 
-                Log.i(TAG, "PRINT request: transport=$transport cut=$cut textLen=${text.length}")
+                Log.i(
+                    TAG,
+                    "PRINT request: transport=$transport cut=$cut openDrawer=$openDrawer drawerPin=$drawerPin " +
+                            "img=${imageBase64 != null} qr=${qrText != null} textLen=${text.length}"
+                )
 
+                // =========================
+                // Armar bytes ESC/POS (80mm)
+                // =========================
+                val data = EscPosBuilder.build(
+                    text = text,
+                    cut = cut,
+                    openDrawer = openDrawer,
+                    drawerPin = drawerPin,
+                    imageBase64 = imageBase64,
+                    qrText = qrText,
+                    qrSize = qrSize,
+                    qrEcc = qrEcc
+                )
+
+                // =========================
+                // Enviar por transporte
+                // =========================
                 when (transport) {
                     "tcp" -> {
                         val ip = payload.optString("ip", "")
@@ -85,23 +124,21 @@ class PrintBridgeService : Service() {
                             Log.e(TAG, "Falta ip para imprimir por tcp")
                             false
                         } else {
-                            val data = EscPosBuilder.text(text, cut)
                             tcpPrinter.print(ip, port, data)
                         }
                     }
 
                     else -> {
-                        // USB
-                        usbPrinter.printText(text, cut)
+                        // USB (RECOMENDADO: imprimir bytes crudos)
+                        // Necesitas que UsbEscPosPrinter tenga printRaw(bytes)
+                        usbPrinter.printRaw(data)
                     }
                 }
             }
         )
 
-
         server?.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
         Log.i(TAG, "Servicio listo en http://0.0.0.0:9100/print (usa la IP de la tablet)")
-
     }
 
     override fun onDestroy() {
@@ -130,5 +167,4 @@ class PrintBridgeService : Service() {
             .setOngoing(true)
             .build()
     }
-
 }
