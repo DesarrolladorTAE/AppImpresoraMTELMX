@@ -58,7 +58,6 @@ class PrintBridgeService : Service() {
             permissionAction = ACTION_USB_PERMISSION
         )
 
-        // Receiver para permisos USB
         val filter = IntentFilter(ACTION_USB_PERMISSION)
         ContextCompat.registerReceiver(
             this,
@@ -71,50 +70,51 @@ class PrintBridgeService : Service() {
             port = 9100,
             onPrint = { payload: JSONObject ->
 
-                // =========================
-                // Payload base
-                // =========================
-                val text = payload.optString("text", "")
+                val textBeforeQr = payload.optString("textBeforeQr", "")
+                val textAfterQr = payload.optString("textAfterQr", "")
                 val cut = payload.optBoolean("cut", true)
 
-                // Nuevos campos
                 val openDrawer = payload.optBoolean("openDrawer", false)
-                val drawerPin = payload.optInt("drawerPin", 0) // 0 pin2 / 1 pin5
+                val drawerPin = payload.optInt("drawerPin", 0)
 
-                val imageBase64 = payload.optString("imageBase64", null)
-                    ?.takeIf { it.isNotBlank() }
+                val imageBase64 = when {
+                    payload.has("logo") && payload.optString("logo").isNotBlank() ->
+                        payload.optString("logo")
+                    payload.has("imageBase64") && payload.optString("imageBase64").isNotBlank() ->
+                        payload.optString("imageBase64")
+                    else -> null
+                }
+
+                val logoMaxWidth = payload.optInt("logoMaxWidth", 160)
 
                 val qrText = payload.optString("qrText", null)
                     ?.takeIf { it.isNotBlank() }
 
                 val qrSize = payload.optInt("qrSize", 8)
-                val qrEcc = payload.optInt("qrEcc", 49) // M por default
+                val qrEcc = payload.optInt("qrEcc", 49)
 
                 val transport = payload.optString("transport", "usb")
 
                 Log.i(
                     TAG,
                     "PRINT request: transport=$transport cut=$cut openDrawer=$openDrawer drawerPin=$drawerPin " +
-                            "img=${imageBase64 != null} qr=${qrText != null} textLen=${text.length}"
+                            "img=${imageBase64 != null} qr=${qrText != null} " +
+                            "beforeLen=${textBeforeQr.length} afterLen=${textAfterQr.length} logoMaxWidth=$logoMaxWidth"
                 )
 
-                // =========================
-                // Armar bytes ESC/POS (80mm)
-                // =========================
                 val data = EscPosBuilder.build(
-                    text = text,
+                    textBeforeQr = textBeforeQr,
+                    textAfterQr = textAfterQr,
                     cut = cut,
-                    openDrawer = openDrawer,
+                    shouldOpenDrawer = openDrawer,
                     drawerPin = drawerPin,
                     imageBase64 = imageBase64,
                     qrText = qrText,
                     qrSize = qrSize,
-                    qrEcc = qrEcc
+                    qrEcc = qrEcc,
+                    logoMaxWidth = logoMaxWidth
                 )
 
-                // =========================
-                // Enviar por transporte
-                // =========================
                 when (transport) {
                     "tcp" -> {
                         val ip = payload.optString("ip", "")
@@ -129,8 +129,6 @@ class PrintBridgeService : Service() {
                     }
 
                     else -> {
-                        // USB (RECOMENDADO: imprimir bytes crudos)
-                        // Necesitas que UsbEscPosPrinter tenga printRaw(bytes)
                         usbPrinter.printRaw(data)
                     }
                 }

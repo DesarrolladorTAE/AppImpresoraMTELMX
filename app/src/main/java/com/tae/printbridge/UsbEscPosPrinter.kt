@@ -3,7 +3,11 @@ package com.tae.printbridge
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.hardware.usb.*
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbEndpoint
+import android.hardware.usb.UsbInterface
+import android.hardware.usb.UsbManager
 import android.util.Log
 import java.nio.charset.Charset
 
@@ -15,17 +19,23 @@ class UsbEscPosPrinter(
 
     companion object {
         private const val TAG = "UsbEscPosPrinter"
-        private const val TIMEOUT_MS = 4000
+        private const val TRANSFER_TIMEOUT_MS = 8000
+        private const val CHUNK_SIZE = 4096
     }
 
     /**
-     * ✅ NUEVO: Imprime bytes ESC/POS crudos (soporta: texto + imagen + QR + cajón + corte)
+     * Imprime bytes ESC/POS crudos (texto + imagen + QR + cajón + corte)
      */
     fun printRaw(bytes: ByteArray): Boolean {
         val device = findCandidateDevice() ?: run {
             Log.e(TAG, "No hay impresora USB conectada")
             return false
         }
+
+        Log.i(
+            TAG,
+            "Dispositivo detectado: name=${device.deviceName}, vendorId=${device.vendorId}, productId=${device.productId}"
+        )
 
         if (!usbManager.hasPermission(device)) {
             requestPermission(device)
@@ -38,8 +48,11 @@ class UsbEscPosPrinter(
             return false
         }
 
+        var claimed = false
+        var intf: UsbInterface? = null
+
         try {
-            val intf = pickInterface(device) ?: run {
+            intf = pickInterface(device) ?: run {
                 Log.e(TAG, "No se encontró interfaz USB imprimible")
                 return false
             }
@@ -48,26 +61,57 @@ class UsbEscPosPrinter(
                 Log.e(TAG, "No se pudo reclamar la interfaz USB")
                 return false
             }
+            claimed = true
 
             val epOut = pickOutEndpoint(intf) ?: run {
                 Log.e(TAG, "No se encontró endpoint OUT")
                 return false
             }
 
-            val sent = conn.bulkTransfer(epOut, bytes, bytes.size, TIMEOUT_MS)
-            Log.i(TAG, "bulkTransfer RAW sent=$sent bytes=${bytes.size}")
-            return sent > 0
+            Log.i(
+                TAG,
+                "Imprimiendo RAW: totalBytes=${bytes.size}, endpoint=${epOut.address}, chunkSize=$CHUNK_SIZE"
+            )
+
+            var offset = 0
+            while (offset < bytes.size) {
+                val len = minOf(CHUNK_SIZE, bytes.size - offset)
+                val chunk = bytes.copyOfRange(offset, offset + len)
+
+                val sent = conn.bulkTransfer(epOut, chunk, chunk.size, TRANSFER_TIMEOUT_MS)
+
+                if (sent <= 0) {
+                    Log.e(TAG, "Falló bulkTransfer: offset=$offset len=$len sent=$sent")
+                    return false
+                }
+
+                Log.d(TAG, "Chunk enviado: offset=$offset len=$len sent=$sent")
+                offset += sent
+            }
+
+            Log.i(TAG, "Impresión RAW completada. bytes=${bytes.size}")
+            return true
 
         } catch (e: Exception) {
             Log.e(TAG, "Error imprimiendo RAW: ${e.message}", e)
             return false
         } finally {
-            try { conn.close() } catch (_: Exception) {}
+            try {
+                if (claimed && intf != null) {
+                    conn.releaseInterface(intf)
+                }
+            } catch (_: Exception) {
+            }
+
+            try {
+                conn.close()
+            } catch (_: Exception) {
+            }
         }
     }
 
     /**
-     * (Opcional) Para compatibilidad: arma ESC/POS básico desde texto
+     * Compatibilidad: arma ESC/POS básico desde texto
      */
     fun printText(text: String, cut: Boolean = true): Boolean {
         val payload = buildEscPos(text, cut)
@@ -88,12 +132,11 @@ class UsbEscPosPrinter(
         val devices = usbManager.deviceList.values.toList()
         if (devices.isEmpty()) return null
 
-        // Prioriza el primero que tenga endpoint OUT (típico de impresoras)
         return devices.firstOrNull { dev ->
             (0 until dev.interfaceCount).any { idx ->
                 val intf = dev.getInterface(idx)
-                (0 until intf.endpointCount).any { ep ->
-                    val endpoint = intf.getEndpoint(ep)
+                (0 until intf.endpointCount).any { epIndex ->
+                    val endpoint = intf.getEndpoint(epIndex)
                     endpoint.direction == UsbConstants.USB_DIR_OUT
                 }
             }
@@ -105,7 +148,9 @@ class UsbEscPosPrinter(
             val intf = device.getInterface(i)
             for (e in 0 until intf.endpointCount) {
                 val ep = intf.getEndpoint(e)
-                if (ep.direction == UsbConstants.USB_DIR_OUT) return intf
+                if (ep.direction == UsbConstants.USB_DIR_OUT) {
+                    return intf
+                }
             }
         }
         return null
@@ -114,7 +159,9 @@ class UsbEscPosPrinter(
     private fun pickOutEndpoint(intf: UsbInterface): UsbEndpoint? {
         for (e in 0 until intf.endpointCount) {
             val ep = intf.getEndpoint(e)
-            if (ep.direction == UsbConstants.USB_DIR_OUT) return ep
+            if (ep.direction == UsbConstants.USB_DIR_OUT) {
+                return ep
+            }
         }
         return null
     }
@@ -124,12 +171,11 @@ class UsbEscPosPrinter(
             .replace("\r\n", "\n")
             .replace("\r", "\n")
 
-        val init = byteArrayOf(0x1B, 0x40)  // ESC @ reset
+        val init = byteArrayOf(0x1B, 0x40)
         val body = clean.toByteArray(Charset.forName("windows-1252"))
-        val feed = "\n\n".toByteArray()
-
+        val feed = "\n\n".toByteArray(Charset.forName("windows-1252"))
         val cutCmd = if (cut) byteArrayOf(0x1D, 0x56, 0x00) else byteArrayOf()
-        val lf = "\n".toByteArray()
+        val lf = "\n".toByteArray(Charset.forName("windows-1252"))
 
         return init + body + feed + cutCmd + lf
     }
