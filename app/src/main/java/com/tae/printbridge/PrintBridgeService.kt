@@ -25,6 +25,7 @@ class PrintBridgeService : Service() {
         private const val ACTION_USB_PERMISSION = "com.tae.printbridge.USB_PERMISSION"
         private const val CHANNEL_ID = "tae_print_bridge"
         private const val NOTIF_ID = 1001
+        private const val PREFS_NAME = "tae_print_config"
     }
 
     private var server: PrintServer? = null
@@ -70,22 +71,47 @@ class PrintBridgeService : Service() {
             port = 9100,
             onPrint = { payload: JSONObject ->
 
+                val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+
+                val savedTransport = prefs.getString("print_mode", "usb") ?: "usb"
+                val savedIp = prefs.getString("printer_ip", "") ?: ""
+                val savedPort = prefs.getInt("printer_port", 9100)
+                val savedCut = prefs.getBoolean("cut", true)
+                val savedOpenDrawer = prefs.getBoolean("open_drawer", false)
+                val savedLogo = prefs.getString("logo_base64", "") ?: ""
+                val savedLogoMaxWidth = prefs.getInt("logo_max_width", 160)
+
                 val textBeforeQr = payload.optString("textBeforeQr", "")
                 val textAfterQr = payload.optString("textAfterQr", "")
-                val cut = payload.optBoolean("cut", true)
 
-                val openDrawer = payload.optBoolean("openDrawer", false)
+                val cut = if (payload.has("cut")) {
+                    payload.optBoolean("cut", savedCut)
+                } else {
+                    savedCut
+                }
+
+                val openDrawer = if (payload.has("openDrawer")) {
+                    payload.optBoolean("openDrawer", savedOpenDrawer)
+                } else {
+                    savedOpenDrawer
+                }
+
                 val drawerPin = payload.optInt("drawerPin", 0)
 
                 val imageBase64 = when {
                     payload.has("logo") && payload.optString("logo").isNotBlank() ->
                         payload.optString("logo")
+
                     payload.has("imageBase64") && payload.optString("imageBase64").isNotBlank() ->
                         payload.optString("imageBase64")
+
+                    savedLogo.isNotBlank() ->
+                        savedLogo
+
                     else -> null
                 }
 
-                val logoMaxWidth = payload.optInt("logoMaxWidth", 160)
+                val logoMaxWidth = payload.optInt("logoMaxWidth", savedLogoMaxWidth)
 
                 val qrText = payload.optString("qrText", null)
                     ?.takeIf { it.isNotBlank() }
@@ -93,13 +119,15 @@ class PrintBridgeService : Service() {
                 val qrSize = payload.optInt("qrSize", 8)
                 val qrEcc = payload.optInt("qrEcc", 49)
 
-                val transport = payload.optString("transport", "usb")
+                val transport = payload.optString("transport", savedTransport)
+                    .lowercase()
+                    .replace("tcp/ip", "tcp")
 
                 Log.i(
                     TAG,
                     "PRINT request: transport=$transport cut=$cut openDrawer=$openDrawer drawerPin=$drawerPin " +
-                            "img=${imageBase64 != null} qr=${qrText != null} " +
-                            "beforeLen=${textBeforeQr.length} afterLen=${textAfterQr.length} logoMaxWidth=$logoMaxWidth"
+                        "img=${imageBase64 != null} qr=${qrText != null} " +
+                        "beforeLen=${textBeforeQr.length} afterLen=${textAfterQr.length} logoMaxWidth=$logoMaxWidth"
                 )
 
                 val data = EscPosBuilder.build(
@@ -117,8 +145,8 @@ class PrintBridgeService : Service() {
 
                 when (transport) {
                     "tcp" -> {
-                        val ip = payload.optString("ip", "")
-                        val port = payload.optInt("port", 9100)
+                        val ip = payload.optString("ip", savedIp)
+                        val port = payload.optInt("port", savedPort)
 
                         if (ip.isBlank()) {
                             Log.e(TAG, "Falta ip para imprimir por tcp")
@@ -136,11 +164,15 @@ class PrintBridgeService : Service() {
         )
 
         server?.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
-        Log.i(TAG, "Servicio listo en http://0.0.0.0:9100/print (usa la IP de la tablet)")
+        Log.i(TAG, "Servicio listo en http://0.0.0.0:9100/print")
     }
 
     override fun onDestroy() {
-        try { unregisterReceiver(usbPermissionReceiver) } catch (_: Exception) {}
+        try {
+            unregisterReceiver(usbPermissionReceiver)
+        } catch (_: Exception) {
+        }
+
         server?.stop()
         super.onDestroy()
     }
@@ -154,6 +186,7 @@ class PrintBridgeService : Service() {
                 "TaePrintBridge",
                 NotificationManager.IMPORTANCE_LOW
             )
+
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(channel)
         }

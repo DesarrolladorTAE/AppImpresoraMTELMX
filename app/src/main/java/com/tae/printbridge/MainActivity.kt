@@ -2,25 +2,87 @@ package com.tae.printbridge
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var webView: WebView
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1) Levanta el servicio (como ya lo hacías)
         val i = Intent(this, PrintBridgeService::class.java)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
 
-        // 2) WebView para abrir tu POS (en internet) dentro de la app
-        val webView = WebView(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), 0, dp(10), 0)
+            setBackgroundColor(Color.parseColor("#F58220"))
+        }
+
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.mtelmx_logo)
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+
+        topBar.addView(
+            logo,
+            LinearLayout.LayoutParams(dp(120), dp(42))
+        )
+
+        val spacer = FrameLayout(this)
+        topBar.addView(
+            spacer,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        )
+
+        val settingsButton = TextView(this).apply {
+            text = "⚙"
+            textSize = 26f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
+            }
+        }
+
+        topBar.addView(
+            settingsButton,
+            LinearLayout.LayoutParams(dp(52), dp(52))
+        )
+
+        root.addView(
+            topBar,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(58)
+            )
+        )
+
+        webView = WebView(this)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -30,25 +92,31 @@ class MainActivity : ComponentActivity() {
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = WebViewClient()
 
-        // 3) Bridge JS -> Android
         webView.addJavascriptInterface(
             AndroidPrintBridge(this),
             "AndroidPrintBridge"
         )
 
-        // 4) Carga tu POS (AJUSTA ESTA URL a la pantalla exacta)
         webView.loadUrl("https://mitiendaenlineamx.com.mx/login-register")
 
-        setContentView(webView)
+        root.addView(
+            webView,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
 
-        // ❌ Ya NO hacemos finish()
-    }
+        setContentView(root)
 
-    // Opcional: botón atrás navega en web
-    override fun onBackPressed() {
-        val root = window.decorView.rootView
-        val webView = root as? WebView
-        if (webView != null && webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (webView.canGoBack()) webView.goBack() else finish()
+                }
+            }
+        )
     }
 }
